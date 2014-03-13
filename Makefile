@@ -1,6 +1,7 @@
 .PHONY: assets todo fixme otto run test-all release test-synopsis test262
 .PHONY: test test-race test-check test-all
 .PHONY: underscore
+.PHONY: parser
 
 TESTS := \
 	~
@@ -12,9 +13,12 @@ TEST := .
 CHECK_GO := GOROOT= GOPATH=$(PWD)/.test/check/:$(GOPATH) $(HOME)/go/release/bin/go
 CHECK_OTTO := $(PWD)/.test/check/src/github.com/robertkrimen/otto
 
-test: inline.go
+test: parser inline.go
 	go test -i
 	go test $(TEST)
+
+parser:
+	$(MAKE) -C parser
 
 assets:
 	mkdir -p .assets
@@ -37,7 +41,7 @@ test-all: inline.go
 	go test
 
 release: test-race test-all test-synopsis
-	for package in . underscore registry; do (cd $$package && godocdown --signature > README.markdown); done
+	for package in . parser token ast file underscore registry; do (cd $$package && godocdown --signature > README.markdown); done
 
 test-race:
 	go test -race -i

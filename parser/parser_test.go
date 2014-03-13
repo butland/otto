@@ -1,0 +1,1257 @@
+package parser
+
+import (
+	. "../terst"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/robertkrimen/otto/ast"
+)
+
+var matchBeforeAfterSeparator = regexp.MustCompile(`(?m)^[ \t]*---$`)
+
+func testParse(src string) (parser *_parser, program *ast.Program, err error) {
+	defer func() {
+		if tmp := recover(); tmp != nil {
+			switch tmp := tmp.(type) {
+			case string:
+				if strings.HasPrefix(tmp, "SyntaxError:") {
+					parser = nil
+					program = nil
+					err = errors.New(tmp)
+					return
+				}
+			}
+			panic(tmp)
+		}
+	}()
+	parser = newParser("", src)
+	program, err = parser.parse()
+	return
+}
+
+func TestParserErr(t *testing.T) {
+	Terst(t)
+
+	test := func(input string, expect interface{}) (*ast.Program, *_parser) {
+		parser := newParser("", input)
+		program, err := parser.parse()
+		Is(err, expect)
+		return program, parser
+	}
+
+	program, parser := test("", nil)
+
+	program, parser = test(`
+        var abc;
+        break; do {
+        } while(true);
+    `, "(anonymous): Line 3:9 Illegal break statement")
+	{
+		stmt := program.Body[1].(*ast.BadStatement)
+		Is(parser.position(stmt.From).Column, 9)
+		Is(parser.position(stmt.To).Column, 16)
+		Is(parser.slice(stmt.From, stmt.To), "break; ")
+	}
+
+	test("{", "(anonymous): Line 1:2 Unexpected end of input")
+
+	test("}", "(anonymous): Line 1:1 Unexpected token }")
+
+	test("3ea", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3in", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3in []", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3e", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3e+", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3e-", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3x", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("3x0", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("0x", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("09", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("018", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("01.0", "(anonymous): Line 1:3 Unexpected number")
+
+	test("01a", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("0x3in[]", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\"Hello\nWorld\"", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\u203f = 10", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("x\\", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("x\\\\", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("x\\u005c", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("x\\u002a", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("x\\\\u002a", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("/\n", "(anonymous): Line 1:1 Invalid regular expression: missing /")
+
+	test("var x = /(s/g", "(anonymous): Line 1:9 Invalid regular expression: Unterminated group")
+
+	test("0 = 1", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	test("func() = 1", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	test("(1 + 1) = 2", "(anonymous): Line 1:2 Invalid left-hand side in assignment")
+
+	test("1++", "(anonymous): Line 1:2 Invalid left-hand side in assignment")
+
+	test("1--", "(anonymous): Line 1:2 Invalid left-hand side in assignment")
+
+	test("--1", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	test("for((1 + 1) in abc) def();", "(anonymous): Line 1:1 Invalid left-hand side in for-in")
+
+	test("[", "(anonymous): Line 1:2 Unexpected end of input")
+
+	test("[,", "(anonymous): Line 1:3 Unexpected end of input")
+
+	test("1 + {", "(anonymous): Line 1:6 Unexpected end of input")
+
+	test("1 + { abc:abc", "(anonymous): Line 1:14 Unexpected end of input")
+
+	test("1 + { abc:abc,", "(anonymous): Line 1:15 Unexpected end of input")
+
+	test("var abc = /\n/", "(anonymous): Line 1:11 Invalid regular expression: missing /")
+
+	test("var abc = \"\n", "(anonymous): Line 1:11 Unexpected token ILLEGAL")
+
+	test("var if = 0", "(anonymous): Line 1:5 Unexpected token if")
+
+	test("abc + 0 = 1", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	test("+abc = 1", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	test("1 + (", "(anonymous): Line 1:6 Unexpected end of input")
+
+	test("\n\n\n{", "(anonymous): Line 4:2 Unexpected end of input")
+
+	test("\n/* Some multiline\ncomment */\n)", "(anonymous): Line 4:1 Unexpected token )")
+
+	// TODO
+	//{ set 1 }
+	//{ get 2 }
+	//({ set: s(if) { } })
+	//({ set s(.) { } })
+	//({ set: s() { } })
+	//({ set: s(a, b) { } })
+	//({ get: g(d) { } })
+	//({ get i() { }, i: 42 })
+	//({ i: 42, get i() { } })
+	//({ set i(x) { }, i: 42 })
+	//({ i: 42, set i(x) { } })
+	//({ get i() { }, get i() { } })
+	//({ set i(x) { }, set i(x) { } })
+
+	test("function abc(if) {}", "(anonymous): Line 1:14 Unexpected token if")
+
+	test("function abc(true) {}", "(anonymous): Line 1:14 Unexpected token true")
+
+	test("function abc(false) {}", "(anonymous): Line 1:14 Unexpected token false")
+
+	test("function abc(null) {}", "(anonymous): Line 1:14 Unexpected token null")
+
+	test("function null() {}", "(anonymous): Line 1:10 Unexpected token null")
+
+	test("function true() {}", "(anonymous): Line 1:10 Unexpected token true")
+
+	test("function false() {}", "(anonymous): Line 1:10 Unexpected token false")
+
+	test("function if() {}", "(anonymous): Line 1:10 Unexpected token if")
+
+	test("a b;", "(anonymous): Line 1:3 Unexpected identifier")
+
+	test("if.a", "(anonymous): Line 1:3 Unexpected token .")
+
+	test("a if", "(anonymous): Line 1:3 Unexpected token if")
+
+	test("a class", "(anonymous): Line 1:3 Unexpected token class")
+
+	test("break\n", "(anonymous): Line 1:1 Illegal break statement")
+
+	test("break 1;", "(anonymous): Line 1:7 Unexpected number")
+
+	test("for (;;) { break 1; }", "(anonymous): Line 1:18 Unexpected number")
+
+	test("continue\n", "(anonymous): Line 1:1 Illegal continue statement")
+
+	test("continue 1;", "(anonymous): Line 1:10 Unexpected number")
+
+	test("for (;;) { continue 1; }", "(anonymous): Line 1:21 Unexpected number")
+
+	test("throw", "(anonymous): Line 1:1 Unexpected end of input")
+
+	test("throw;", "(anonymous): Line 1:6 Unexpected token ;")
+
+	test("throw \n", "(anonymous): Line 1:1 Unexpected end of input")
+
+	test("for (var abc, def in {});", "(anonymous): Line 1:19 Unexpected token in")
+
+	test("for ((abc in {}));", "(anonymous): Line 1:11 Unexpected token in")
+
+	test("for (+abc in {});", "(anonymous): Line 1:1 Invalid left-hand side in for-in")
+
+	test("if (false)", "(anonymous): Line 1:11 Unexpected end of input")
+
+	test("if (false) abc(); else", "(anonymous): Line 1:23 Unexpected end of input")
+
+	test("do", "(anonymous): Line 1:3 Unexpected end of input")
+
+	test("while (false)", "(anonymous): Line 1:14 Unexpected end of input")
+
+	test("for (;;)", "(anonymous): Line 1:9 Unexpected end of input")
+
+	test("with (abc)", "(anonymous): Line 1:11 Unexpected end of input")
+
+	test("try {}", "(anonymous): Line 1:1 Missing catch or finally after try")
+
+	test("try {} catch {}", "(anonymous): Line 1:14 Unexpected token {")
+
+	test("try {} catch () {}", "(anonymous): Line 1:15 Unexpected token )")
+
+	test("\u203f = 1", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	// TODO
+	// const x = 12, y;
+	// const x, y = 12;
+	// const x;
+	// if(true) let a = 1;
+	// if(true) const  a = 1;
+
+	test(`new abc()."def"`, "(anonymous): Line 1:11 Unexpected string")
+
+	test("/*", "(anonymous): Line 1:3 Unexpected end of input")
+
+	test("/**", "(anonymous): Line 1:4 Unexpected end of input")
+
+	test("/*\n\n\n", "(anonymous): Line 4:1 Unexpected end of input")
+
+	test("/*\n\n\n*", "(anonymous): Line 4:2 Unexpected end of input")
+
+	test("/*abc", "(anonymous): Line 1:6 Unexpected end of input")
+
+	test("/*abc  *", "(anonymous): Line 1:9 Unexpected end of input")
+
+	test("\n]", "(anonymous): Line 2:1 Unexpected token ]")
+
+	test("\r\n]", "(anonymous): Line 2:1 Unexpected token ]")
+
+	test("\n\r]", "(anonymous): Line 3:1 Unexpected token ]")
+
+	test("//\r\n]", "(anonymous): Line 2:1 Unexpected token ]")
+
+	test("//\n\r]", "(anonymous): Line 3:1 Unexpected token ]")
+
+	test("/abc\\\n/", "(anonymous): Line 1:1 Invalid regular expression: missing /")
+
+	test("//\r \n]", "(anonymous): Line 3:1 Unexpected token ]")
+
+	test("/*\r\n*/]", "(anonymous): Line 2:3 Unexpected token ]")
+
+	test("/*\r \n*/]", "(anonymous): Line 3:3 Unexpected token ]")
+
+	test("\\\\", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\\u005c", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\\abc", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\\u0000", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\\u200c = []", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("\\u200D = []", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test(`"\`, "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test(`"\u`, "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("return", "(anonymous): Line 1:1 Illegal return statement")
+
+	test("continue", "(anonymous): Line 1:1 Illegal continue statement")
+
+	test("break", "(anonymous): Line 1:1 Illegal break statement")
+
+	test("switch (abc) { default: continue; }", "(anonymous): Line 1:25 Illegal continue statement")
+
+	test("do { abc } *", "(anonymous): Line 1:12 Unexpected token *")
+
+	test("while (true) { break abc; }", "(anonymous): Line 1:16 Undefined label 'abc'")
+
+	test("while (true) { continue abc; }", "(anonymous): Line 1:16 Undefined label 'abc'")
+
+	test("abc: while (true) { (function(){ break abc; }); }", "(anonymous): Line 1:34 Undefined label 'abc'")
+
+	test("abc: while (true) { (function(){ abc: break abc; }); }", nil)
+
+	test("abc: while (true) { (function(){ continue abc; }); }", "(anonymous): Line 1:34 Undefined label 'abc'")
+
+	test(`abc: if (0) break abc; else {}`, nil)
+
+	test(`abc: if (0) { break abc; } else {}`, nil)
+
+	test(`abc: if (0) { break abc } else {}`, nil)
+
+	test("abc: while (true) { abc: while (true) {} }", "(anonymous): Line 1:21 Label 'abc' already exists")
+
+	if false {
+		// TODO When strict mode is implemented
+		test("(function () { 'use strict'; delete abc; }())", "")
+	}
+
+	test("_: _: while (true) {]", "(anonymous): Line 1:4 Label '_' already exists")
+
+	test("_:\n_:\nwhile (true) {]", "(anonymous): Line 2:1 Label '_' already exists")
+
+	test("_:\n   _:\nwhile (true) {]", "(anonymous): Line 2:4 Label '_' already exists")
+
+	test("/Xyzzy(?!Nothing happens)/",
+		"(anonymous): Line 1:1 Invalid regular expression: re2: Invalid (?!) <lookahead>")
+
+	test("function(){}", "(anonymous): Line 1:9 Unexpected token (")
+
+	test("\n/*/", "(anonymous): Line 2:4 Unexpected end of input")
+
+	test("/*/.source", "(anonymous): Line 1:11 Unexpected end of input")
+
+	if false {
+		test("/\\1/.source", "(anonymous): Line 1:1 Invalid regular expression: invalid escape sequence: `\\1`")
+	}
+
+	test("var class", "(anonymous): Line 1:5 Unexpected token class")
+
+	test("object Object", "(anonymous): Line 1:8 Unexpected identifier")
+
+	test("[object Object]", "(anonymous): Line 1:9 Unexpected identifier")
+
+	test("\\u0xyz", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test(`for (var abc, def in {}) {}`, "(anonymous): Line 1:19 Unexpected token in")
+
+	test(`for (abc, def in {}) {}`, "(anonymous): Line 1:1 Invalid left-hand side in for-in")
+}
+
+func TestParserAST(t *testing.T) {
+	Terst(t)
+
+	test := func(inputOutput string) {
+		match := matchBeforeAfterSeparator.FindStringIndex(inputOutput)
+		input := strings.TrimSpace(inputOutput[0:match[0]])
+		wantOutput := strings.TrimSpace(inputOutput[match[1]:])
+		_, program, err := testParse(input)
+		Is(err, nil)
+		haveOutput := testMarshal(program)
+		tmp0, tmp1 := bytes.Buffer{}, bytes.Buffer{}
+		json.Indent(&tmp0, []byte(haveOutput), "\t\t", "   ")
+		json.Indent(&tmp1, []byte(wantOutput), "\t\t", "   ")
+		Is("\n\t\t"+tmp0.String(), "\n\t\t"+tmp1.String())
+	}
+
+	test(`
+    ---
+[]
+    `)
+
+	test(`
+    ;
+    ---
+[
+  "EmptyStatement"
+]
+    `)
+
+	test(`
+    ;;;
+    ---
+[
+  "EmptyStatement",
+  "EmptyStatement",
+  "EmptyStatement"
+]
+    `)
+
+	test(`
+    1; true; abc; "abc"; null;
+    ---
+[
+  {
+    "Literal": 1
+  },
+  {
+    "Literal": true
+  },
+  {
+    "Identifier": "abc"
+  },
+  {
+    "Literal": "\"abc\""
+  },
+  {
+    "Literal": null
+  }
+]
+    `)
+
+	test(`
+    { 1; null; 3.14159; ; }
+    ---
+[
+  {
+    "BlockStatement": [
+      {
+        "Literal": 1
+      },
+      {
+        "Literal": null
+      },
+      {
+        "Literal": 3.14159
+      },
+      "EmptyStatement"
+    ]
+  }
+]
+    `)
+
+	test(`
+    new abc();
+    ---
+[
+  {
+    "New": {
+      "ArgumentList": [],
+      "Callee": {
+        "Identifier": "abc"
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    new abc(1, 3.14159)
+    ---
+[
+  {
+    "New": {
+      "ArgumentList": [
+        {
+          "Literal": 1
+        },
+        {
+          "Literal": 3.14159
+        }
+      ],
+      "Callee": {
+        "Identifier": "abc"
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    true ? false : true
+    ---
+[
+  {
+    "Conditional": {
+      "Alternate": {
+        "Literal": true
+      },
+      "Consequent": {
+        "Literal": false
+      },
+      "Test": {
+        "Literal": true
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    true || false
+    ---
+[
+  {
+    "BinaryExpression": {
+      "Left": {
+        "Literal": true
+      },
+      "Operator": "||",
+      "Right": {
+        "Literal": false
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    0 + { abc: true }
+    ---
+[
+  {
+    "BinaryExpression": {
+      "Left": {
+        "Literal": 0
+      },
+      "Operator": "+",
+      "Right": {
+        "Object": [
+          {
+            "Key": "abc",
+            "Value": {
+              "Literal": true
+            }
+          }
+        ]
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    1 == "1"
+    ---
+[
+  {
+    "BinaryExpression": {
+      "Left": {
+        "Literal": 1
+      },
+      "Operator": "==",
+      "Right": {
+        "Literal": "\"1\""
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    abc(1)
+    ---
+[
+  {
+    "Call": {
+      "ArgumentList": [
+        {
+          "Literal": 1
+        }
+      ],
+      "Callee": {
+        "Identifier": "abc"
+      }
+    }
+  }
+]
+    `)
+	test(`
+    Math.pow(3, 2)
+    ---
+[
+  {
+    "Call": {
+      "ArgumentList": [
+        {
+          "Literal": 3
+        },
+        {
+          "Literal": 2
+        }
+      ],
+      "Callee": {
+        "Dot": {
+          "Left": {
+            "Identifier": "Math"
+          },
+          "Member": "pow"
+        }
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    1, 2, 3
+    ---
+[
+  {
+    "Sequence": [
+      {
+        "Literal": 1
+      },
+      {
+        "Literal": 2
+      },
+      {
+        "Literal": 3
+      }
+    ]
+  }
+]
+    `)
+
+	test(`
+    / abc /   gim;
+    ---
+[
+  {
+    "Literal": "/ abc /   gim"
+  }
+]
+    `)
+
+	test(`
+    if (0)
+        1;
+    ---
+[
+  {
+    "If": {
+      "Consequent": {
+        "Literal": 1
+      },
+      "Test": {
+        "Literal": 0
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+    0+function(){
+        return;
+    }
+    ---
+[
+  {
+    "BinaryExpression": {
+      "Left": {
+        "Literal": 0
+      },
+      "Operator": "+",
+      "Right": {
+        "Function": {
+          "BlockStatement": [
+            {
+              "Return": null
+            }
+          ]
+        }
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+	xyzzy // Ignore it
+	// Ignore this
+	// And this
+	/* And all..
+
+
+
+	... of this!
+	*/
+	"Nothing happens."
+	// And finally this
+    ---
+[
+  {
+    "Identifier": "xyzzy"
+  },
+  {
+    "Literal": "\"Nothing happens.\""
+  }
+]
+    `)
+
+	test(`
+    ((x & (x = 1)) !== 0)
+    ---
+[
+  {
+    "BinaryExpression": {
+      "Left": {
+        "BinaryExpression": {
+          "Left": {
+            "Identifier": "x"
+          },
+          "Operator": "\u0026",
+          "Right": {
+            "Assign": {
+              "Left": {
+                "Identifier": "x"
+              },
+              "Right": {
+                "Literal": 1
+              }
+            }
+          }
+        }
+      },
+      "Operator": "!==",
+      "Right": {
+        "Literal": 0
+      }
+    }
+  }
+]
+    `)
+
+	test(`
+	{ abc: 'def' }
+	---
+[
+  {
+    "BlockStatement": [
+      {
+        "Label": {
+          "Name": "abc",
+          "Statement": {
+            "Literal": "'def'"
+          }
+        }
+      }
+    ]
+  }
+]
+	`)
+
+	test(`
+	// This is not an object, this is a string literal with a label!
+	({ abc: 'def' })
+	---
+[
+  {
+    "Object": [
+      {
+        "Key": "abc",
+        "Value": {
+          "Literal": "'def'"
+        }
+      }
+    ]
+  }
+]
+	`)
+
+	test(`
+    [,]
+    ---
+[
+  {
+    "Array": [
+      null
+    ]
+  }
+]
+    `)
+
+	test(`
+    [,,]
+    ---
+[
+  {
+    "Array": [
+      null,
+      null
+    ]
+  }
+]
+    `)
+
+	return
+
+	test(`
+    ({ get abc() {} })
+    ---
+    `)
+
+}
+
+func TestParser(t *testing.T) {
+	Terst(t)
+
+	test := func(source string, chk interface{}) *ast.Program {
+		_, program, err := testParse(source)
+		Is(err, chk)
+		return program
+	}
+
+	test(`
+        abc
+        --
+        []
+    `, "(anonymous): Line 3:9 Invalid left-hand side in assignment")
+
+	test(`
+        abc--
+        []
+    `, nil)
+
+	test("1\n[]\n", "(anonymous): Line 2:2 Unexpected token ]")
+
+	test(`
+        function abc() {
+        }
+        abc()
+    `, nil)
+
+	program := test("", nil)
+
+	test("//", nil)
+
+	test("/* */", nil)
+
+	test("/** **/", nil)
+
+	test("/*****/", nil)
+
+	test("/*", "(anonymous): Line 1:3 Unexpected end of input")
+
+	test("#", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("/**/#", "(anonymous): Line 1:5 Unexpected token ILLEGAL")
+
+	test("new +", "(anonymous): Line 1:5 Unexpected token +")
+
+	program = test(";", nil)
+	Is(len(program.Body), 1)
+	Is(program.Body[0].(*ast.EmptyStatement).Semicolon, "1")
+
+	program = test(";;", nil)
+	Is(len(program.Body), 2)
+	Is(program.Body[0].(*ast.EmptyStatement).Semicolon, "1")
+	Is(program.Body[1].(*ast.EmptyStatement).Semicolon, "2")
+
+	program = test("1.2", nil)
+	Is(len(program.Body), 1)
+	Is(program.Body[0].(*ast.ExpressionStatement).Expression.(*ast.NumberLiteral).Literal, "1.2")
+
+	program = test("/* */1.2", nil)
+	Is(len(program.Body), 1)
+	Is(program.Body[0].(*ast.ExpressionStatement).Expression.(*ast.NumberLiteral).Literal, "1.2")
+
+	program = test("\n", nil)
+	Is(len(program.Body), 0)
+
+	test(`
+        if (0) {
+            abc = 0
+        }
+        else abc = 0
+    `, nil)
+
+	test("if (0) abc = 0 else abc = 0", "(anonymous): Line 1:16 Unexpected token else")
+
+	test(`
+        if (0) {
+            abc = 0
+        } else abc = 0
+    `, nil)
+
+	test(`
+        if (0) {
+            abc = 1
+        } else {
+        }
+    `, nil)
+
+	test(`
+        do {
+		} while (true)
+    `, nil)
+
+	test(`
+        try {
+        } finally {
+        }
+    `, nil)
+
+	test(`
+        try {
+        } catch (abc) {
+        } finally {
+        }
+    `, nil)
+
+	test(`
+        try {
+        }
+        catch (abc) {
+        }
+        finally {
+        }
+    `, nil)
+
+	test(`try {} catch (abc) {} finally {}`, nil)
+
+	test(`
+        do {
+            do {
+            } while (0)
+		} while (0)
+    `, nil)
+
+	test(`
+        (function(){
+            try {
+                if (
+                    1
+                ) {
+                    return 1
+                }
+                return 0
+            } finally {
+            }
+        })()
+    `, nil)
+
+	test("abc = ''\ndef", nil)
+
+	test("abc = 1\ndef", nil)
+
+	test("abc = Math\ndef", nil)
+
+	test(`"\'"`, nil)
+
+	test(`
+		abc = function(){
+		}
+		abc = 0
+    `, nil)
+
+	test("abc.null = 0", nil)
+
+	test("0x41", nil)
+
+	test(`"\d"`, nil)
+
+	test(`(function(){return this})`, nil)
+
+	test(`
+        Object.defineProperty(Array.prototype, "0", {
+            value: 100,
+            writable: false,
+            configurable: true
+        });
+        abc = [101];
+        abc.hasOwnProperty("0") && abc[0] === 101;
+    `, nil)
+
+	test(`new abc()`, nil)
+	test(`new {}`, nil)
+
+	test(`
+		limit = 4
+		result = 0
+		while (limit) {
+			limit = limit - 1
+			if (limit) {
+			}
+			else {
+				break
+			}
+			result = result + 1
+		}
+    `, nil)
+
+	test(`
+        while (0) {
+            if (0) {
+                continue
+            }
+        }
+    `, nil)
+
+	test("var \u0061\u0062\u0063 = 0", nil)
+
+	// 7_3_1
+	test("var test7_3_1\nabc = 66;", nil)
+	test("var test7_3_1\u2028abc = 66;", nil)
+
+	// 7_3_3
+	test("//\u2028 =;", "(anonymous): Line 2:2 Unexpected token =")
+
+	// 7_3_10
+	test("var abc = \u2029;", "(anonymous): Line 2:1 Unexpected token ;")
+	test("var abc = \\u2029;", "(anonymous): Line 1:11 Unexpected token ILLEGAL")
+	test("var \\u0061\\u0062\\u0063 = 0;", nil)
+
+	test("'", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	test("'\nstr\ning\n'", "(anonymous): Line 1:1 Unexpected token ILLEGAL")
+
+	// S7.6_A4.3_T1
+	test(`var $\u0030 = 0;`, nil)
+
+	// S7.6.1.1_A1.1
+	test(`switch = 1`, "(anonymous): Line 1:8 Unexpected token =")
+
+	// S7.8.3_A2.1_T1
+	test(`.0 === 0.0`, nil)
+
+	// 7.8.5-1
+	test("var regExp = /\\\rn/;", "(anonymous): Line 1:14 Invalid regular expression: missing /")
+
+	// S7.8.5_A1.1_T2
+	test("var regExp = /=/;", nil)
+
+	// S7.8.5_A1.2_T1
+	test("/*/", "(anonymous): Line 1:4 Unexpected end of input")
+
+	// Sbp_7.9_A9_T3
+	test(`
+        do {
+        ;
+        } while (false) true
+    `, nil)
+
+	// S7.9_A10_T10
+	test(`
+        {a:1
+        } 3
+    `, nil)
+
+	test(`
+        abc
+        ++def
+    `, nil)
+
+	// S7.9_A5.2_T1
+	test(`
+        for(false;false
+        ) {
+        break;
+        }
+    `, "(anonymous): Line 3:9 Unexpected token )")
+
+	// S7.9_A9_T8
+	test(`
+        do {};
+        while (false)
+    `, "(anonymous): Line 2:14 Unexpected token ;")
+
+	// S8.4_A5
+	test(`
+        "x\0y"
+    `, nil)
+
+	// S9.3.1_A6_T1
+	test(`
+        10e10000
+    `, nil)
+
+	// 10.4.2-1-5
+	test(`
+        "abc\
+        def"
+    `, nil)
+
+	test("'\\\n'", nil)
+
+	test("'\\\r\n'", nil)
+
+	//// 11.13.1-1-1
+	test("42 = 42;", "(anonymous): Line 1:1 Invalid left-hand side in assignment")
+
+	// S11.13.2_A4.2_T1.3
+	test(`
+        abc /= "1"
+    `, nil)
+
+	// 12.1-1
+	test(`
+        try{};catch(){}
+    `, "(anonymous): Line 2:9 Missing catch or finally after try")
+
+	// 12.1-3
+	test(`
+        try{};finally{}
+    `, "(anonymous): Line 2:9 Missing catch or finally after try")
+
+	// S12.6.3_A11.1_T3
+	test(`
+        while (true) {
+            break abc;
+        }
+    `, "(anonymous): Line 3:13 Undefined label 'abc'")
+
+	// S15.3_A2_T1
+	test(`var x / = 1;`, "(anonymous): Line 1:7 Unexpected token /")
+
+	test(`
+        function abc() {
+            if (0)
+                return;
+            else {
+            }
+        }
+    `, nil)
+
+	test("//\u2028 var =;", "(anonymous): Line 2:6 Unexpected token =")
+
+	test(`
+        throw
+        {}
+    `, "(anonymous): Line 2:9 Illegal newline after throw")
+
+	// S7.6.1.1_A1.11
+	test(`
+        function = 1
+    `, "(anonymous): Line 2:18 Unexpected token =")
+
+	// S7.8.3_A1.2_T1
+	test(`0e1`, nil)
+
+	// ---
+
+	test("({ get abc() {} })", nil)
+
+	test(`for (abc.def in {}) {}`, nil)
+}
+
+func Test_parseStringLiteral(t *testing.T) {
+	Terst(t)
+
+	test := func(have, want string) {
+		have, err := parseStringLiteral(have)
+		Is(err, nil)
+		Is(have, want)
+	}
+
+	test("", "")
+
+	test("1(\\\\d+)", "1(\\d+)")
+
+	test("\\u2029", "\u2029")
+
+	test("abc\\uFFFFabc", "abc\uFFFFabc")
+
+	test("[First line \\\nSecond line \\\n Third line\\\n.     ]",
+		"[First line Second line  Third line.     ]")
+
+	test("\\u007a\\x79\\u000a\\x78", "zy\nx")
+
+	// S7.8.4_A4.2_T3
+	test("\\a", "a")
+	test("\u0410", "\u0410")
+
+	// S7.8.4_A5.1_T1
+	test("\\0", "\u0000")
+
+	// S8.4_A5
+	test("\u0000", "\u0000")
+
+	// 15.5.4.20
+	test("'abc'\\\n'def'", "'abc''def'")
+
+	// 15.5.4.20-4-1
+	test("'abc'\\\r\n'def'", "'abc''def'")
+
+	// Octal
+	test("\\0", "\000")
+	test("\\00", "\000")
+	test("\\000", "\000")
+	test("\\09", "\0009")
+	test("\\009", "\0009")
+	test("\\0009", "\0009")
+	test("\\1", "\001")
+	test("\\01", "\001")
+	test("\\001", "\001")
+	test("\\0011", "\0011")
+	test("\\1abc", "\001abc")
+
+	test("\\\u4e16", "\u4e16")
+
+	// err
+	test = func(have, want string) {
+		have, err := parseStringLiteral(have)
+		Is(err.Error(), want)
+		Is(have, "")
+	}
+
+	test(`\u`, `invalid escape: \u: len("") != 4`)
+	test(`\u0`, `invalid escape: \u: len("0") != 4`)
+	test(`\u00`, `invalid escape: \u: len("00") != 4`)
+	test(`\u000`, `invalid escape: \u: len("000") != 4`)
+
+	test(`\x`, `invalid escape: \x: len("") != 2`)
+	test(`\x0`, `invalid escape: \x: len("0") != 2`)
+	test(`\x0`, `invalid escape: \x: len("0") != 2`)
+
+}
+
+func TestPosition(t *testing.T) {
+	Terst(t)
+
+	parser := newParser("", "// Lorem ipsum")
+
+	// Out of range, idx0 (error condition)
+	Is(parser.slice(0, 1), "")
+	Is(parser.slice(0, 10), "")
+
+	// Out of range, idx1 (error condition)
+	Is(parser.slice(1, 128), "")
+
+	Is(parser.str[0:0], "")
+	Is(parser.slice(1, 1), "")
+
+	Is(parser.str[0:1], "/")
+	Is(parser.slice(1, 2), "/")
+
+	Is(parser.str[0:14], "// Lorem ipsum")
+	Is(parser.slice(1, 15), "// Lorem ipsum")
+
+	parser = newParser("", "(function(){ return 0; })")
+	program, err := parser.parse()
+	Is(err, nil)
+
+	var node ast.Node
+	node = program.Body[0].(*ast.ExpressionStatement).Expression.(*ast.FunctionExpression)
+	Is(node.Idx0(), 2)
+	Is(node.Idx1(), 25)
+	Is(parser.slice(node.Idx0(), node.Idx1()), "function(){ return 0; }")
+	Is(parser.slice(node.Idx0(), node.Idx1()+1), "function(){ return 0; })")
+	Is(parser.slice(node.Idx0(), node.Idx1()+2), "")
+	Is(node.(*ast.FunctionExpression).Source, "function(){ return 0; }")
+
+	node = program
+	Is(node.Idx0(), 2)
+	Is(node.Idx1(), 25)
+	Is(parser.slice(node.Idx0(), node.Idx1()), "function(){ return 0; }")
+
+	parser = newParser("", "(function(){ return abc; })")
+	program, err = parser.parse()
+	Is(err, nil)
+	node = program.Body[0].(*ast.ExpressionStatement).Expression.(*ast.FunctionExpression)
+	Is(node.(*ast.FunctionExpression).Source, "function(){ return abc; }")
+}

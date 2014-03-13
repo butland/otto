@@ -1,0 +1,170 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+my (%token, @order);
+
+{
+    my @const;
+    push @const, <<_END_;
+package token
+
+const(
+_END_
+
+    for (split m/\n/, <<_END_) {
+ILLEGAL
+EOF
+COMMENT
+
+STRING
+BOOLEAN
+NULL
+NUMBER
+IDENTIFIER
+
+PLUS                            +
+MINUS                           -
+MULTIPLY                        *
+SLASH                           /
+REMAINDER                       %
+
+AND                             &
+OR                              |
+EXCLUSIVE_OR                    ^
+SHIFT_LEFT                      <<
+SHIFT_RIGHT                     >>
+UNSIGNED_SHIFT_RIGHT            >>>
+AND_NOT                         &^
+
+ADD_ASSIGN                     +=
+SUBTRACT_ASSIGN                -=
+MULTIPLY_ASSIGN                *=
+QUOTIENT_ASSIGN                /=
+REMAINDER_ASSIGN               %=
+
+AND_ASSIGN                     &=
+OR_ASSIGN                      |=
+EXCLUSIVE_OR_ASSIGN            ^=
+SHIFT_LEFT_ASSIGN              <<=
+SHIFT_RIGHT_ASSIGN             >>=
+UNSIGNED_SHIFT_RIGHT_ASSIGN    >>>=
+AND_NOT_ASSIGN                 &^=
+
+LOGICAL_AND                    &&
+LOGICAL_OR                     ||
+INCREMENT                      ++
+DECREMENT                      --
+
+EQUAL                          ==
+STRICT_EQUAL                   ===
+LESS                           <
+GREATER                        >
+ASSIGN                         =
+NOT                            !
+
+BITWISE_NOT                    ~
+
+NOT_EQUAL                      !=
+STRICT_NOT_EQUAL               !==
+LESS_OR_EQUAL                  <=
+GREATER_OR_EQUAL               <=
+
+LEFT_PARENTHESIS               (
+LEFT_BRACKET                   [
+LEFT_BRACE                     {
+COMMA                          ,
+PERIOD                         .
+
+RIGHT_PARENTHESIS              )
+RIGHT_BRACKET                  ]
+RIGHT_BRACE                    }
+SEMICOLON                      ;
+COLON                          :
+QUESTION_MARK                  ?
+
+keywordToken_
+IF
+IN
+DO
+
+VAR
+FOR
+NEW
+TRY
+LET
+
+THIS
+ELSE
+CASE
+VOID
+WITH
+ENUM
+
+WHILE
+BREAK
+CATCH
+THROW
+CONST
+YIELD
+CLASS
+SUPER
+
+RETURN
+TYPEOF
+DELETE
+SWITCH
+EXPORT
+IMPORT
+
+DEFAULT
+FINALLY
+EXTENDS
+
+FUNCTION
+CONTINUE
+DEBUGGER
+
+INSTANCEOF
+_keywordToken
+_END_
+        chomp;
+
+        my ($name, $symbol) = m/(\w+)\s*(\S+)?/;
+        if (defined $symbol) {
+            push @order, $name;
+            push @const, "$name // $symbol";
+            $token{$name} = $symbol;
+        } elsif (defined $name) {
+            push @const, $name;
+            $const[-1] .= " Token = iota" if 2 == @const;
+            if ($name =~ m/^[A-Z]/) {
+                push @order, $name;
+                if ($token{SEMICOLON}) {
+                    $token{$name} = lc $name;
+                } else {
+                    $token{$name} = $name;
+                }
+            }
+        } else {
+            push @const, "";
+        }
+
+    }
+    push @const, ")";
+    print join "\n", @const, "";
+}
+
+{
+    print <<_END_;
+
+var token2string = [...]string{
+_END_
+    for my $name (@order) {
+        print "$name: \"$token{$name}\",\n";
+    }
+    print <<_END_;
+}
+_END_
+}

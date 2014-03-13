@@ -4,7 +4,58 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/robertkrimen/otto/ast"
 )
+
+// FIXME
+
+var keywordTable map[string]bool = boolFields(`
+	break
+	case
+	catch
+	continue
+	default
+	delete
+	do
+	else
+	finally
+	for
+	function
+	if
+	in
+	instanceof
+	new
+	null
+	return
+	switch
+	this
+	throw
+	try
+	typeof
+	var
+	while
+	with
+	void
+
+	debugger
+	const
+`)
+
+var futureKeywordTable map[string]bool = boolFields(`
+    class
+    enum
+    export
+    extends
+    import
+    super
+`)
+
+func init() {
+	for keyword, _ := range futureKeywordTable {
+		keywordTable[keyword] = true
+	}
+}
 
 // Function
 
@@ -36,7 +87,7 @@ func builtinNewFunctionNative(runtime *_runtime, argumentList []Value) *_object 
 	if argumentCount > 0 {
 		parameterList = argumentList2parameterList(argumentList[0 : argumentCount-1])
 		for _, value := range parameterList {
-			// TODO: This is extremely hacky... maybe go through the parser directly?
+			//TODO: This is extremely hacky... maybe go through the parser directly?
 			if !matchIdentifier.MatchString(value) || keywordTable[value] {
 				panic(newSyntaxError(value))
 			}
@@ -44,15 +95,16 @@ func builtinNewFunctionNative(runtime *_runtime, argumentList []Value) *_object 
 		bodySource = toString(argumentList[argumentCount-1])
 	}
 
-	parser := newParser()
-	parser.lexer.Source = bodySource
-	_programNode := parser.ParseAsFunction()
-	return runtime.newNodeFunction(_programNode.toFunction(parameterList), runtime.GlobalEnvironment)
+	program := runtime.mustParse("(function(){" + bodySource + "})")
+	functionNode := program.Body[0].(*ast.ExpressionStatement).Expression.(*ast.FunctionExpression)
+	functionNode.ParameterList = parameterList
+
+	return runtime.newNodeFunction(functionNode, runtime.GlobalEnvironment)
 }
 
 func builtinFunction_toString(call FunctionCall) Value {
-	call.thisClassObject("Function") // Should throw a TypeError unless Function
-	return toValue_string("[function]")
+	object := call.thisClassObject("Function") // Should throw a TypeError unless Function
+	return toValue_string(object.value.(_functionObject).source(object))
 }
 
 func builtinFunction_apply(call FunctionCall) Value {

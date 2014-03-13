@@ -3,6 +3,9 @@ package otto
 import (
 	"reflect"
 	"strconv"
+
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/parser"
 )
 
 type _global struct {
@@ -52,6 +55,8 @@ type _runtime struct {
 	eval *_object // The builtin eval, for determine indirect versus direct invocation
 
 	Otto *Otto
+
+	labels []string // FIXME
 }
 
 func (self *_runtime) EnterGlobalExecutionContext() {
@@ -119,7 +124,7 @@ func (self *_runtime) PutValue(reference _reference, value Value) {
 	}
 }
 
-func (self *_runtime) _callNode(function *_object, environment *_functionEnvironment, node *_functionNode, this Value, argumentList []Value) Value {
+func (self *_runtime) _callNode(function *_object, environment *_functionEnvironment, node *ast.FunctionExpression, this Value, argumentList []Value) Value {
 
 	indexOfParameterName := make([]string, len(argumentList))
 	// function(abc, def, ghi)
@@ -128,7 +133,11 @@ func (self *_runtime) _callNode(function *_object, environment *_functionEnviron
 	// indexOfParameterName[2] = "ghi"
 	// ...
 
+	argumentsFound := false
 	for index, name := range node.ParameterList {
+		if name == "arguments" {
+			argumentsFound = true
+		}
 		value := UndefinedValue()
 		if index < len(argumentList) {
 			value = argumentList[index]
@@ -137,7 +146,7 @@ func (self *_runtime) _callNode(function *_object, environment *_functionEnviron
 		self.localSet(name, value)
 	}
 
-	if !node.ArgumentsIsParameter {
+	if !argumentsFound {
 		arguments := self.newArgumentsObject(indexOfParameterName, environment, len(argumentList))
 		arguments.defineProperty("callee", toValue_object(function), 0101, false)
 		environment.arguments = arguments
@@ -151,10 +160,10 @@ func (self *_runtime) _callNode(function *_object, environment *_functionEnviron
 		}
 	}
 
-	self.declare("function", node.FunctionList)
-	self.declare("variable", node.VariableList)
+	self.functionDeclaration(node.FunctionList)
+	self.variableDeclaration(node.VariableList)
 
-	result := self.evaluateBody(node.Body)
+	result := self.evaluate(node.Body)
 	if result.isResult() {
 		return result
 	}
@@ -194,9 +203,9 @@ func (self *_runtime) tryCatchEvaluate(inner func() Value) (tryValue Value, exce
 			case _error:
 				exception = true
 				tryValue = toValue_object(self.newError(caught.Name, caught.MessageValue()))
-			case *_syntaxError:
-				exception = true
-				tryValue = toValue_object(self.newError("SyntaxError", toValue_string(caught.Message)))
+			//case *_syntaxError:
+			//    exception = true
+			//    tryValue = toValue_object(self.newError("SyntaxError", toValue_string(caught.Message)))
 			case Value:
 				exception = true
 				tryValue = caught
@@ -210,25 +219,32 @@ func (self *_runtime) tryCatchEvaluate(inner func() Value) (tryValue Value, exce
 	return
 }
 
-func (self *_runtime) declare(kind string, declarationList []_declaration) {
+func (self *_runtime) functionDeclaration(list []ast.Declaration) {
 	executionContext := self._executionContext(0)
 	eval := executionContext.eval
 	environment := executionContext.VariableEnvironment
 
-	for _, _declaration := range declarationList {
-		name := _declaration.Name
-		if kind == "function" {
-			value := self.evaluate(_declaration.Definition)
-			if !environment.HasBinding(name) {
-				environment.CreateMutableBinding(name, eval == true)
-			}
-			// TODO 10.5.5.e
-			environment.SetMutableBinding(name, value, false) // TODO strict
-		} else {
-			if !environment.HasBinding(name) {
-				environment.CreateMutableBinding(name, eval == true)
-				environment.SetMutableBinding(name, UndefinedValue(), false) // TODO strict
-			}
+	for _, declaration := range list {
+		name := declaration.Name
+		value := self.evaluate(declaration.Definition)
+		if !environment.HasBinding(name) {
+			environment.CreateMutableBinding(name, eval == true)
+		}
+		// TODO 10.5.5.e
+		environment.SetMutableBinding(name, value, false) // TODO strict
+	}
+}
+
+func (self *_runtime) variableDeclaration(list []ast.Declaration) {
+	executionContext := self._executionContext(0)
+	eval := executionContext.eval
+	environment := executionContext.VariableEnvironment
+
+	for _, declaration := range list {
+		name := declaration.Name
+		if !environment.HasBinding(name) {
+			environment.CreateMutableBinding(name, eval == true)
+			environment.SetMutableBinding(name, UndefinedValue(), false) // TODO strict
 		}
 	}
 }
@@ -305,9 +321,9 @@ func (self *_runtime) toValue(value interface{}) Value {
 	case Value:
 		return value
 	case func(FunctionCall) Value:
-		return toValue_object(self.newNativeFunction(value))
+		return toValue_object(self.newNativeFunction("", value))
 	case _nativeFunction:
-		return toValue_object(self.newNativeFunction(value))
+		return toValue_object(self.newNativeFunction("", value))
 	case Object, *Object, _object, *_object:
 		// Nothing happens.
 		// FIXME
@@ -323,7 +339,7 @@ func (self *_runtime) toValue(value interface{}) Value {
 					return toValue_object(self.newGoArray(value))
 				}
 			case reflect.Func:
-				return toValue_object(self.newNativeFunction(func(call FunctionCall) Value {
+				return toValue_object(self.newNativeFunction("", func(call FunctionCall) Value {
 					args := make([]reflect.Value, len(call.ArgumentList))
 					for i, a := range call.ArgumentList {
 						args[i] = reflect.ValueOf(a.export())
@@ -363,14 +379,25 @@ func (runtime *_runtime) newGoArray(value reflect.Value) *_object {
 	return self
 }
 
-func (self *_runtime) run(source string) Value {
-	return self.evaluate(mustParse(source))
+func (runtime *_runtime) parse(source string) (*ast.Program, error) {
+	return parser.ParseFile(nil, "", source, 0)
 }
 
-func (self *_runtime) runSafe(source string) (Value, error) {
+func mustParse(program *ast.Program, err error) *ast.Program {
+	if err != nil {
+		panic(err)
+	}
+	return program
+}
+
+func (self *_runtime) run(source string) (Value, error) {
 	result := UndefinedValue()
-	err := catchPanic(func() {
-		result = self.run(source)
+	program, err := self.parse(source)
+	if err != nil {
+		return result, err
+	}
+	err = catchPanic(func() {
+		result = self.evaluate(program)
 	})
 	switch result._valueType {
 	case valueReference:

@@ -6,64 +6,64 @@ Package otto is a JavaScript parser and interpreter written natively in Go.
 
 http://godoc.org/github.com/robertkrimen/otto
 
-    // Create a new runtime
-    Otto := otto.New()
+    	// Create a new runtime
+    	ctx := otto.New()
 
-    Otto.Run(`
-    	abc = 2 + 2
-    	console.log("The value of abc is " + abc)
-    	// The value of abc is 4
-    `)
+    	ctx.Run(`
+            abc = 2 + 2;
+    		console.log("The value of abc is " + abc);
+    		// The value of abc is 4
+    	`)
 
-    value, err := Otto.Get("abc")
-    {
-    	// value is an int64 with a value of 4
-    	value, _ := value.ToInteger()
-    }
+    	value, err := ctx.Get("abc")
+    	{
+    		// value is an int64 with a value of 4
+    		value, _ := value.ToInteger()
+    	}
 
-    Otto.Set("def", 11)
-    Otto.Run(`
-    	console.log("The value of def is " + def)
-    	// The value of def is 11
-    `)
+    	ctx.Set("def", 11)
+    	ctx.Run(`
+    		console.log("The value of def is " + def);
+    		// The value of def is 11
+    	`)
 
-    Otto.Set("xyzzy", "Nothing happens.")
-    Otto.Run(`
-    	console.log(xyzzy.length) // 16
-    `)
+    	ctx.Set("xyzzy", "Nothing happens.")
+    	ctx.Run(`
+    		console.log(xyzzy.length); // 16
+    	`)
 
-    value, _ = Otto.Run("xyzzy.length")
-    {
-    	// value is an int64 with a value of 16
-    	value, _ := value.ToInteger()
-    }
+    	value, _ = ctx.Run("xyzzy.length")
+    	{
+    		// value is an int64 with a value of 16
+    		value, _ := value.ToInteger()
+    	}
 
-    value, err = Otto.Run("abcdefghijlmnopqrstuvwxyz.length")
-    if err != nil {
-    	// err = ReferenceError: abcdefghijlmnopqrstuvwxyz is not defined
-    	// If there is an error, then value.IsUndefined() is true
-    	...
-    }
+    	value, err = ctx.Run("abcdefghijlmnopqrstuvwxyz.length")
+    	if err != nil {
+    		// err = ReferenceError: abcdefghijlmnopqrstuvwxyz is not defined
+    		// If there is an error, then value.IsUndefined() is true
+    		...
+    	}
 
 Embedding a Go function in JavaScript:
 
-    Otto.Set("sayHello", func(call otto.FunctionCall) otto.Value {
+    ctx.Set("sayHello", func(call otto.FunctionCall) otto.Value {
     	fmt.Printf("Hello, %s.\n", call.Argument(0).String())
     	return otto.UndefinedValue()
     })
 
-    Otto.Set("twoPlus", func(call otto.FunctionCall) otto.Value {
+    ctx.Set("twoPlus", func(call otto.FunctionCall) otto.Value {
     	right, _ := call.Argument(0).ToInteger()
-    	result, _ := Otto.ToValue(2 + right)
+    	result, _ := ctx.ToValue(2 + right)
     	return result
     })
 
-    result, _ = Otto.Run(`
+    result, _ = ctx.Run(`
     	// First, say a greeting
-    	sayHello("Xyzzy") // Hello, Xyzzy.
-    	sayHello() // Hello, undefined
+    	sayHello("Xyzzy"); // Hello, Xyzzy.
+    	sayHello(); // Hello, undefined
 
-    	result = twoPlus(2.0) // 4
+    	result = twoPlus(2.0); // 4
     `)
 
 You can run (Go) JavaScript from the commandline with:
@@ -125,9 +125,10 @@ the interrupt channel to do this:
     import (
         "errors"
         "fmt"
-        Otto "github.com/robertkrimen/otto"
         "os"
-        Time "time"
+        "time"
+
+        "github.com/robertkrimen/otto"
     )
 
     var Halt = errors.New("Halt")
@@ -141,9 +142,9 @@ the interrupt channel to do this:
     }
 
     func runUnsafe(unsafe string) {
-        start := Time.Now()
+        start := time.Now()
         defer func() {
-            duration := Time.Since(start)
+            duration := time.Since(start)
             if caught := recover(); caught != nil {
                 if caught == Halt {
                     fmt.Fprintf(os.Stderr, "Some code took to long! Stopping after: %v\n", duration)
@@ -153,16 +154,16 @@ the interrupt channel to do this:
             }
             fmt.Fprintf(os.Stderr, "Ran code successfully: %v\n", duration)
         }()
-        otto := Otto.New()
-        otto.Interrupt = make(chan func())
+        ctx := otto.New()
+        ctx.Interrupt = make(chan func())
         go func() {
-            Time.Sleep(2 * Time.Second) // Stop after two seconds
-            otto.Interrupt <- func() {
+            time.Sleep(2 * time.Second) // Stop after two seconds
+            ctx.Interrupt <- func() {
                 panic(Halt)
             }
         }()
-        otto.Run(unsafe) // Here be dragons (risky code)
-        otto.Interrupt = nil
+        ctx.Run(unsafe) // Here be dragons (risky code)
+        ctx.Interrupt = nil
     }
 
 Where is setTimeout/setInterval?
@@ -217,11 +218,12 @@ Object is the representation of a JavaScript object.
 ```go
 func (self Object) Call(name string, argumentList ...interface{}) (Value, error)
 ```
-Call the method specified by the given name, using self as the this value. It is
-essentially equivalent to:
+Call a method on the object.
 
-    var method, _ := self.Get(name)
-    method.Call(self, argumentList...)
+It is essentially equivalent to:
+
+    var method, _ := object.Get(name)
+    method.Call(object, argumentList...)
 
 An undefined value and an error will result if:
 
@@ -315,8 +317,6 @@ func (self Otto) Call(source string, this interface{}, argumentList ...interface
 ```
 Call the given JavaScript with a given this and arguments.
 
-WARNING: 2013-05-19: This function is rough, and is in beta.
-
 If this is nil, then some special handling takes place to determine the proper
 this value, falling back to a "standard" invocation if necessary (where this is
 undefined).
@@ -326,14 +326,14 @@ will invoke the function constructor rather than performing a function call. In
 this case, the this argument has no effect.
 
     // value is a String object
-    value, _ := Otto.Call("Object", nil, "Hello, World.")
+    value, _ := ctx.Call("Object", nil, "Hello, World.")
 
     // Likewise...
-    value, _ := Otto.Call("new Object", nil, "Hello, World.")
+    value, _ := ctx.Call("new Object", nil, "Hello, World.")
 
     // This will perform a concat on the given array and return the result
     // value is [ 1, 2, 3, undefined, 4, 5, 6, 7, "abc" ]
-    value, _ := Otto.Call(`[ 1, 2, 3, undefined, 4 ].concat`, nil, 5, 6, 7, "abc")
+    value, _ := ctx.Call(`[ 1, 2, 3, undefined, 4 ].concat`, nil, 5, 6, 7, "abc")
 
 #### func (*Otto) Copy
 
@@ -368,15 +368,15 @@ Object will run the given source and return the result as an object.
 
 For example, accessing an existing object:
 
-    object, _ := Otto.Object(`Number`)
+    object, _ := ctx.Object(`Number`)
 
 Or, creating a new object:
 
-    object, _ := Otto.Object(`({ xyzzy: "Nothing happens." })`)
+    object, _ := ctx.Object(`({ xyzzy: "Nothing happens." })`)
 
 Or, creating and assigning an object:
 
-    object, _ := Otto.Object(`xyzzy = {}`)
+    object, _ := ctx.Object(`xyzzy = {}`)
     object.Set("volume", 11)
 
 If there is an error (like the source does not result in an object), then nil

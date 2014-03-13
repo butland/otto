@@ -10,7 +10,25 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/robertkrimen/otto/ast"
+	"github.com/robertkrimen/otto/parser"
 )
+
+func (self *_runtime) mustParse(source string) *ast.Program {
+	program, err := self.parse(source)
+	if err != nil {
+		switch err := err.(type) {
+		case *parser.Error:
+			if err.Message == "Invalid left-hand side in assignment" {
+				panic(newReferenceError(err.Message))
+			}
+			panic(newSyntaxError(err.Message))
+		}
+		panic(newSyntaxError(err.Error()))
+	}
+	return program
+}
 
 // Global
 func builtinGlobal_eval(call FunctionCall) Value {
@@ -18,16 +36,8 @@ func builtinGlobal_eval(call FunctionCall) Value {
 	if !source.IsString() {
 		return source
 	}
-	program, err := parse(toString(source))
-	if err != nil {
-		switch err := err.(type) {
-		case *_syntaxError, *_error, _error:
-			panic(err)
-		default:
-			panic(&_syntaxError{Message: fmt.Sprintf("%v", err)})
-		}
-	}
 	runtime := call.runtime
+	program := runtime.mustParse(toString(source))
 	if call.evalHint {
 		runtime.EnterEvalExecutionContext(call)
 		defer runtime.LeaveExecutionContext()

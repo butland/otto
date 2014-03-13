@@ -24,7 +24,7 @@ func TestGlobal(t *testing.T) {
 		Is(result._object().prototype == runtime.Global.ObjectPrototype, true)
 		Is(result._object().prototype == runtime.Global.Object.get("prototype")._object(), true)
 		Is(runtime.newObject().prototype == runtime.Global.Object.get("prototype")._object(), true)
-		Is(result._object().get("toString"), "[function]")
+		Is(result._object().get("toString"), "function toString() { [native code] }")
 		//Is(result.Object().CallMethod("hasOwnProperty", "hasOwnProperty"), falseValue)
 		//Is(result.Object().get("toString").Object().prototype.CallMethod("toString"), "[function]")
 		//Is(result.Object().get("toString").Object().get("toString").Object(), "[function]")
@@ -46,11 +46,11 @@ func TestGlobal(t *testing.T) {
 
 	test(`new Number().constructor == Number`, "true")
 
-	test(`this.hasOwnProperty`, "[function]")
+	test(`this.hasOwnProperty`, "function hasOwnProperty() { [native code] }")
 
 	test(`eval.length === 1`, "true")
 	test(`eval.prototype === undefined`, "true")
-	test(`raise: new eval()`, "TypeError: [function] is not a constructor")
+	test(`raise: new eval()`, "TypeError: function eval() { [native code] } is not a constructor")
 
 	test(`
         [
